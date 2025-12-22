@@ -3,7 +3,7 @@ import { Elysia } from 'elysia'
 import { Logestic } from 'logestic'
 import path from 'node:path'
 
-import { apiRouter } from './routes'
+import { apiRouter } from './routes/api'
 import { clientRouter, devReloadRouter } from './routes/client'
 
 const isProd = process.env.NODE_ENV === 'production'
