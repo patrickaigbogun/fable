@@ -3,11 +3,17 @@
   "version": "1.0.50",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun --watch app.ts --watch ./routes --watch ./lib --watch ./plugins --no-clear-screen"
+    "generate": "bun core/router/generate.ts",
+    "build:css": "bunx @tailwindcss/cli -i web/styles/index.css -o web/public/assets/styles.css --minify",
+    "build:client": "bun build core/router/client/entry.tsx --target browser --minify --outfile web/public/assets/client.js",
+    "build": "bun run generate && bun run build:css && bun run build:client",
+    "dev": "bun scripts/dev.ts",
+    "start": "NODE_ENV=production bun app.ts"
   },
   "dependencies": {
     "@elysiajs/static": "^1.4.7",
     "@gray-adeyi/paystack-sdk": "^0.2.4",
+    "@tailwindcss/cli": "^4.1.18",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/react": "^19.2.7",
     "clsx": "^2.1.1",
