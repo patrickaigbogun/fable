@@ -1,6 +1,10 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
 
-import type { Metadata, Params, Route, RouteContext, RouteSegment } from '../types'
+import type { LayoutModule, LayoutSelector, Metadata, Params, Route, RouteContext, RouteSegment } from '../types'
+
+import { layouts } from '../.generated/layouts'
+
+import GlobalLayout from '@web/layouts/global'
 
 type RouterState = RouteContext & {
 	navigate: (to: string) => void
@@ -64,6 +68,23 @@ function applyMetadata(meta?: Metadata) {
 	}
 }
 
+function resolveLayoutName(sel: LayoutSelector | undefined): string | undefined {
+	if (!sel) return
+	if (typeof sel === 'string') return sel
+	if (typeof sel === 'function') {
+		try {
+			const v = sel()
+			if (typeof v === 'string') return v
+		} catch {
+			return
+		}
+	}
+}
+
+function getDefaultExport(mod: LayoutModule | any) {
+	return (mod as any)?.default ?? mod
+}
+
 export function useParams<T extends Params = Params>() {
 	const ctx = useContext(RouterContext)
 	if (!ctx) throw new Error('useParams must be used within <FileRouter />')
@@ -74,6 +95,12 @@ export function useQuery() {
 	const ctx = useContext(RouterContext)
 	if (!ctx) throw new Error('useQuery must be used within <FileRouter />')
 	return ctx.query
+}
+
+export function useLocation() {
+	const ctx = useContext(RouterContext)
+	if (!ctx) throw new Error('useLocation must be used within <FileRouter />')
+	return { pathname: ctx.pathname, search: ctx.search }
 }
 
 export function useNavigate() {
@@ -144,16 +171,54 @@ export function FileRouter(props: { routes: Route[]; notFound?: React.ReactNode 
 
 	if (!match) return props.notFound ?? <div>404</div>
 
-	const Page = useMemo(
-		() =>
-			React.lazy(async () => {
-				const mod: any = await match.route.importPage()
-				applyMetadata(mod.metadata)
-				return mod
-			}),
+	type Loaded = {
+		Page: React.ComponentType<any>
+		Layout?: React.ComponentType<{ children: React.ReactNode }>
+	}
+
+	const [loaded, setLoaded] = useState<Loaded | null>(null)
+	const [loadError, setLoadError] = useState<unknown>(null)
+
+	useEffect(() => {
+		let cancelled = false
+		setLoaded(null)
+		setLoadError(null)
+
+		;(async () => {
+			const pageMod: any = await match.route.importPage()
+			applyMetadata(pageMod.metadata)
+			const layoutName = resolveLayoutName(pageMod.layout)
+
+			let Layout: Loaded['Layout']
+			if (layoutName) {
+				const loader = (layouts as Record<string, (() => Promise<LayoutModule>) | undefined>)[
+					layoutName
+				]
+				if (typeof loader === 'function') {
+					const layoutMod = await loader()
+					Layout = getDefaultExport(layoutMod)
+				} else {
+					// eslint-disable-next-line no-console
+					console.warn(`[router] unknown layout: ${layoutName}`)
+				}
+			}
+
+			const Page = pageMod.default
+			if (!Page) throw new Error(`Route module missing default export: ${match.route.file}`)
+
+			if (!cancelled) setLoaded({ Page, Layout })
+		})().catch((err) => {
+			if (cancelled) return
+			setLoadError(err)
+			// eslint-disable-next-line no-console
+			console.error('[router] failed to load route', err)
+		})
+
+		return () => {
+			cancelled = true
+		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[match.route.file]
-	)
+	}, [match.route.file])
 
 	return (
 		<RouterContext.Provider
@@ -163,9 +228,19 @@ export function FileRouter(props: { routes: Route[]; notFound?: React.ReactNode 
 				navigate,
 			}}
 		>
-			<React.Suspense fallback={<div>Loading...</div>}>
-				<Page />
-			</React.Suspense>
+			<GlobalLayout>
+				{loadError ? (
+					<div>Failed to load route</div>
+				) : !loaded ? (
+					<div>Loading...</div>
+				) : loaded.Layout ? (
+					<loaded.Layout>
+						<loaded.Page />
+					</loaded.Layout>
+				) : (
+					<loaded.Page />
+				)}
+			</GlobalLayout>
 		</RouterContext.Provider>
 	)
 }

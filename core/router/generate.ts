@@ -14,6 +14,12 @@ type RouteRecord = {
 	importPath: string
 }
 
+type LayoutRecord = {
+	name: string
+	file: string
+	importPath: string
+}
+
 function toPosix(p: string) {
 	return p.split(path.sep).join('/')
 }
@@ -58,6 +64,65 @@ async function walk(dirAbs: string): Promise<string[]> {
 		out.push(abs)
 	}
 	return out
+}
+
+async function walkIfExists(dirAbs: string): Promise<string[]> {
+	try {
+		return await walk(dirAbs)
+	} catch {
+		return []
+	}
+}
+
+function fileToLayoutName(relPosixNoExt: string) {
+	let n = relPosixNoExt
+	if (n.endsWith('/index')) n = n.slice(0, -'/index'.length)
+	return n
+}
+
+export async function generateLayouts(opts?: {
+	layoutsDir?: string
+	outTs?: string
+}) {
+	const layoutsDirAbs = path.resolve(opts?.layoutsDir ?? './web/layouts')
+	const outTsAbs = path.resolve(opts?.outTs ?? './core/router/.generated/layouts.ts')
+
+	const filesAbs = (await walkIfExists(layoutsDirAbs)).filter((f) => f.endsWith('.tsx'))
+
+	const layouts: LayoutRecord[] = []
+	for (const abs of filesAbs) {
+		const rel = toPosix(path.relative(layoutsDirAbs, abs))
+		if (isIgnoredRouteFile(rel)) continue
+
+		const relNoExt = rel.replace(/\.tsx$/i, '')
+		const name = fileToLayoutName(relNoExt)
+		if (!name) continue
+
+		const importPath = toPosix(path.relative(path.dirname(outTsAbs), abs))
+		const importPathNormalized = importPath.startsWith('.') ? importPath : './' + importPath
+
+		layouts.push({ name, file: rel, importPath: importPathNormalized })
+	}
+
+	layouts.sort((a, b) => a.name.localeCompare(b.name))
+
+	await mkdir(path.dirname(outTsAbs), { recursive: true })
+
+	const ts = `/* eslint-disable */
+// AUTO-GENERATED. DO NOT EDIT.
+// Source: ${toPosix(path.relative(process.cwd(), layoutsDirAbs))}
+// Generated at: ${new Date().toISOString()}
+
+import type { LayoutModule } from '../types'
+
+export const layouts: Record<string, () => Promise<LayoutModule>> = {
+${layouts
+		.map((l) => `  ${JSON.stringify(l.name)}: () => import(${JSON.stringify(l.importPath)}),`)
+		.join('\n')}
+}
+`
+
+	await Bun.write(outTsAbs, ts)
 }
 
 export async function generateFsRoutes(opts?: {
@@ -131,6 +196,7 @@ async function watchPagesAndRegenerate() {
 	let needsRerun = false
 	const watchers = new Map<string, ReturnType<typeof watch>>()
 	const pagesRoot = path.resolve('./web/pages')
+	const layoutsRoot = path.resolve('./web/layouts')
 
 	const ensureWatched = async () => {
 		const seen = new Set<string>()
@@ -161,7 +227,13 @@ async function watchPagesAndRegenerate() {
 			}
 		}
 
-		await walkDirs(pagesRoot)
+		for (const root of [pagesRoot, layoutsRoot]) {
+			try {
+				await walkDirs(root)
+			} catch {
+				// ignore missing roots (e.g. no layouts dir yet)
+			}
+		}
 
 		for (const [dir, w] of watchers) {
 			if (seen.has(dir)) continue
@@ -182,8 +254,9 @@ async function watchPagesAndRegenerate() {
 			try {
 				if (rescanDirs) await ensureWatched()
 				await generateFsRoutes()
+				await generateLayouts()
 				// eslint-disable-next-line no-console
-				console.log('[router] regenerated routes')
+				console.log('[router] regenerated routes/layouts')
 			} catch (err) {
 				// eslint-disable-next-line no-console
 				console.error('[router] route generation failed', err)
@@ -199,8 +272,9 @@ async function watchPagesAndRegenerate() {
 
 	await ensureWatched()
 	await generateFsRoutes()
+	await generateLayouts()
 	// eslint-disable-next-line no-console
-	console.log('[router] watching web/pages for route changes')
+	console.log('[router] watching web/pages and web/layouts for changes')
 
 	const shutdown = () => {
 		for (const w of watchers.values()) w.close()
@@ -216,5 +290,6 @@ if (import.meta.main) {
 		await watchPagesAndRegenerate()
 	} else {
 		await generateFsRoutes()
+		await generateLayouts()
 	}
 }

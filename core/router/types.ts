@@ -10,6 +10,14 @@ export type Metadata = {
 	description?: string
 }
 
+export type LayoutName = string
+
+export type LayoutSelector = LayoutName | (() => LayoutName)
+
+export type LayoutModule = {
+	default: (props: { children: any }) => any
+}
+
 export type RouteContext = {
 	pathname: string
 	search: string
@@ -20,6 +28,7 @@ export type RouteContext = {
 export type PageModule = {
 	default: (props: any) => any
 	metadata?: Metadata
+	layout?: LayoutSelector
 }
 
 export type Route = {
