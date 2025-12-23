@@ -44,3 +44,7 @@ package-lock.json
 core/router/.generated/
 web/public/assets/
 **/*.bun
+
+# local agent/product context
+spec.md
+context.md
